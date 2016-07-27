@@ -616,7 +616,6 @@ static int ft5x06_report_gesture(struct i2c_client *i2c_client,
 	y = (buf[5] & 0x0F) << 8 | (buf[6]);
 	pr_info("t2w: raw = %02X %02X %02X %02X-%02X %02X %02X %02X \n", buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7]);
 	pr_info("t2w: tap = t:%u | s:%u | x:%i y:%i\n", ntouch, status, x, y);
-	pr_info("t2w: device = %p\n", ip_dev);
 		
 	/* If Clicked */
 	if (status == FT_TOUCH_DOWN && ntouch==1) {
@@ -739,8 +738,6 @@ static irqreturn_t ft5x06_ts_interrupt(int irq, void *dev_id)
 		dev_err(&data->client->dev, "%s: read data fail\n", __func__);
 		return IRQ_HANDLED;
 	}
-
-	pr_info("t2w: on = %02X %02X %02X %02X-%02X %02X %02X %02X \n", buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7]);
 
 	for (i = 0; i < data->pdata->num_max_touches; i++) {
 		id = (buf[FT_TOUCH_ID_POS + FT_ONE_TCH_LEN * i]) >> 4;
