@@ -99,6 +99,10 @@
 #define FT_REG_GESTURE_OUTPUT	0xD3
 
 /* gesture register bits*/
+#define FT_GESTURE_MIN_X			100
+#define FT_GESTURE_MIN_Y			100
+#define FT_GESTURE_MAX_X			980
+#define FT_GESTURE_MAX_Y			1820
 #define FT_GESTURE_DOUBLECLICK_COORD_X		100
 #define FT_GESTURE_DOUBLECLICK_COORD_Y		100
 #define FT_GESTURE_WAKEUP_TIMEOUT		500
@@ -614,11 +618,13 @@ static int ft5x06_report_gesture(struct i2c_client *i2c_client,
 	//id = buf[5] >> 4;
 	x = (buf[3] & 0x0F) << 8 | (buf[4]);
 	y = (buf[5] & 0x0F) << 8 | (buf[6]);
-	pr_info("t2w: raw = %02X %02X %02X %02X-%02X %02X %02X %02X \n", buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7]);
-	pr_info("t2w: tap = t:%u | s:%u | x:%i y:%i\n", ntouch, status, x, y);
-		
+	//pr_info("t2w: raw = %02X %02X %02X %02X-%02X %02X %02X %02X \n", buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7]);
+	//pr_info("t2w: tap = t:%u | s:%u | x:%i y:%i\n", ntouch, status, x, y);
+
 	/* If Clicked */
-	if (status == FT_TOUCH_DOWN && ntouch==1) {
+	if (status == FT_TOUCH_DOWN && ntouch==1 &&
+		x > FT_GESTURE_MIN_X && x < FT_GESTURE_MAX_X &&	y > FT_GESTURE_MIN_Y && y < FT_GESTURE_MAX_Y) {
+
 		input_mt_slot(ip_dev, FT_GESTURE_DEFAULT_TRACKING_ID);
 		input_mt_report_slot_state(ip_dev, MT_TOOL_FINGER, 1);
 		input_report_abs(ip_dev, ABS_MT_POSITION_X, x);
@@ -629,7 +635,6 @@ static int ft5x06_report_gesture(struct i2c_client *i2c_client,
 		input_mt_report_slot_state(ip_dev, MT_TOOL_FINGER, 0);
 		input_mt_report_pointer_emulation(ip_dev, false);
 		input_sync(ip_dev);
-		return 0;
 	}
 	return 0;
 }

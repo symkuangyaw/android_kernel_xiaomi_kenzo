@@ -51,7 +51,7 @@ MODULE_VERSION(DRIVER_VERSION);
 MODULE_LICENSE("GPLv2");
 
 /* Tuneables */
-#define DT2W_DEBUG		1
+#define DT2W_DEBUG		0
 #define DT2W_DEFAULT		1
 
 #define DT2W_PWRKEY_DUR		60
@@ -97,7 +97,6 @@ static void doubletap2wake_reset(void) {
 
 /* PowerKey work func */
 static void doubletap2wake_presspwr(struct work_struct * doubletap2wake_presspwr_work) {
-printk(KERN_DEBUG "dt2w-core : power");	
 	if (!mutex_trylock(&pwrkeyworklock))
                 return;
 	input_event(doubletap2wake_pwrdev, EV_KEY, KEY_POWER, 1);
@@ -138,7 +137,6 @@ static void new_touch(int x, int y) {
 static void detect_doubletap2wake(int x, int y, bool st)
 {
         bool single_touch = st;
-printk(KERN_DEBUG "dt2w-core : detect");
 #if DT2W_DEBUG
 
         pr_info(LOGTAG"x,y(%4d,%4d) single:%s\n",
@@ -180,10 +178,11 @@ static void dt2w_input_callback(struct work_struct *unused) {
 static void dt2w_input_event(struct input_handle *handle, unsigned int type,
 				unsigned int code, int value) {
 
-
 	if (!scr_suspended) return;
+	if (code == SYN_REPORT) return;
+	if (code == BTN_TOUCH) return;
 #if DT2W_DEBUG
-	pr_info("doubletap2wake: code: %s|%u, val: %i\n",
+	pr_info("dt2w: code: %s|%u, val: %i\n",
 		((code==ABS_MT_POSITION_X) ? "X" :
 		(code==ABS_MT_POSITION_Y) ? "Y" :
 		(code==ABS_MT_TRACKING_ID) ? "ID" :
@@ -228,7 +227,6 @@ static int dt2w_input_connect(struct input_handler *handler,
 				struct input_dev *dev, const struct input_device_id *id) {
 	struct input_handle *handle;
 	int error;
-printk(KERN_DEBUG "dt2w : dt2w_input_connect");
 	if (input_dev_filter(dev))
 		return -ENODEV;
 
