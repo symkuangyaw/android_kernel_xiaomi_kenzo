@@ -115,6 +115,7 @@ static DECLARE_WORK(doubletap2wake_presspwr_work, doubletap2wake_presspwr);
 
 /* PowerKey trigger */
 static void doubletap2wake_pwrtrigger(void) {
+	set_vibrate();
 	schedule_work(&doubletap2wake_presspwr_work);
         return;
 }
@@ -186,6 +187,8 @@ static void dt2w_input_event(struct input_handle *handle, unsigned int type,
 	if (!scr_suspended) return;
 	if (code == SYN_REPORT) return;
 	if (code == BTN_TOUCH) return;
+	if (in_call) return;
+
 #if DT2W_DEBUG
 	pr_info("dt2w: code: %s|%u, val: %i\n",
 		((code==ABS_MT_POSITION_X) ? "X" :

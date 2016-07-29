@@ -22,5 +22,7 @@
 #define _LINUX_DOUBLETAP2WAKE_H
 
 extern int dt2w_switch;
+extern int in_call;
+void set_vibrate(void);
 
 #endif	/* _LINUX_DOUBLETAP2WAKE_H */
