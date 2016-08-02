@@ -2655,6 +2655,7 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 		}
 		data->gesture_pdata = gesture_pdata;
 		gesture_pdata->data = data;
+		gesture_pdata->gesture_enable_to_set=1;
 
 		gesture_pdata->gesture_class =
 					class_create(THIS_MODULE, "gesture");
