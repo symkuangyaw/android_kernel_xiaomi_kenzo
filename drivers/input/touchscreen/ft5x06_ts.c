@@ -249,6 +249,10 @@ enum {
 
 #define FT_DEBUG_DIR_NAME	"ts_debug"
 
+struct ft5x06_ts_gesture_touch {
+	int x, y;
+	cputime64_t time;
+};
 struct ft5x06_ts_data {
 	struct i2c_client *client;
 	struct input_dev *input_dev;
@@ -263,6 +267,9 @@ struct ft5x06_ts_data {
 	struct dentry *dir;
 	u16 addr;
 	bool suspended;
+	struct input_dev * power_dev;
+	struct ft5x06_ts_gesture_touch prev_touch; 
+	int dt2w_exec;
 	char *ts_info;
 	u8 *tch_data;
 	u32 tch_data_len;
@@ -571,37 +578,18 @@ static DEVICE_ATTR(pocket, 0664,
 		gesture_in_pocket_mode_show,
 		gesture_in_pocket_mode_store);
 
-static int ft5x06_report_gesture_doubleclick(struct input_dev *ip_dev)
-{
-	int i;
-	for (i = 0; i < 2; i++) {
-		input_mt_slot(ip_dev, FT_GESTURE_DEFAULT_TRACKING_ID);
-		input_mt_report_slot_state(ip_dev, MT_TOOL_FINGER, 1);
-		input_report_abs(ip_dev, ABS_MT_POSITION_X,
-					FT_GESTURE_DOUBLECLICK_COORD_X);
-		input_report_abs(ip_dev, ABS_MT_POSITION_Y,
-					FT_GESTURE_DOUBLECLICK_COORD_Y);
-		input_mt_report_pointer_emulation(ip_dev, false);
-		input_sync(ip_dev);
-		input_mt_slot(ip_dev, FT_GESTURE_DEFAULT_TRACKING_ID);
-		input_mt_report_slot_state(ip_dev, MT_TOOL_FINGER, 0);
-		input_mt_report_pointer_emulation(ip_dev, false);
-		input_sync(ip_dev);
-	}
-	return 0;
-}
-
 static int ft5x06_report_gesture(struct i2c_client *i2c_client,
 		struct input_dev *ip_dev)
 {
-	int i, temp, gesture_data_size;
-	int gesture_coord_x, gesture_coord_y;
+	struct ft5x06_ts_data *data = input_get_drvdata(ip_dev);	
+	u32 x, y;
+	cputime64_t time;
+	u8 ntouch, status;
 	int ret = -1;
-	short pointnum = 0;
 	unsigned char buf[FT_GESTURE_POINTER_NUM_MAX *
 			FT_GESTURE_POINTER_SIZEOF + FT_GESTURE_DATA_HEADER];
 
-	buf[0] = FT_REG_GESTURE_OUTPUT;
+	buf[0] = 0;
 	ret = ft5x06_i2c_read(i2c_client, buf, 1,
 				buf, FT_GESTURE_DATA_HEADER);
 	if (ret < 0) {
@@ -610,50 +598,39 @@ static int ft5x06_report_gesture(struct i2c_client *i2c_client,
 		return ret;
 	}
 
-	/* FW support doubleclick */
-	if (FT_GESTURE_DOUBLECLICK_ID == buf[0]) {
-		ft5x06_report_gesture_doubleclick(ip_dev);
-		return 0;
-	}
+	ntouch = buf[2];
+	status = buf[3] >> 6;
+	//id = buf[5] >> 4;
+	x = (buf[3] & 0x0F) << 8 | (buf[4]);
+	y = (buf[5] & 0x0F) << 8 | (buf[6]);
+	if( x < 100 || x > 980 || y < 100 || y > 1820) return 0;
+	time = ktime_to_ms(ktime_get());
+	//pr_info("t2w: tap = t:%u | s:%u | x:%i y:%i\n", ntouch, status, x, y);	
 
-	pointnum = (short)(buf[1]) & 0xff;
-	gesture_data_size = pointnum * FT_GESTURE_POINTER_SIZEOF +
-			FT_GESTURE_DATA_HEADER;
-	buf[0] = FT_REG_GESTURE_OUTPUT;
-	temp = gesture_data_size / I2C_TRANSFER_MAX_BYTE;
-	for (i = 0; i < temp; i++)
-		ret = ft5x06_i2c_read(i2c_client, buf, ((i == 0) ? 1 : 0),
-			buf + I2C_TRANSFER_MAX_BYTE * i, I2C_TRANSFER_MAX_BYTE);
-	ret = ft5x06_i2c_read(i2c_client, buf, ((temp == 0) ? 1 : 0),
-			buf + I2C_TRANSFER_MAX_BYTE * temp,
-			gesture_data_size - I2C_TRANSFER_MAX_BYTE * temp);
-	if (ret < 0) {
-		dev_err(&i2c_client->dev, "%s read touchdata failed.\n",
-			__func__);
-		return ret;
-	}
+	if ( ntouch <= 1 ) {
+		if (status == FT_TOUCH_DOWN ) {
+				
+			pr_info("t2w: down = x:(%i,%i) y:(%i,%i) t:(%lld)\n", 
+				x, data->prev_touch.x, y, data->prev_touch.y, time-data->prev_touch.time);
 
-	for (i = 0; i < pointnum; i++) {
-		gesture_coord_x = (((s16) buf[FT_GESTURE_DATA_HEADER +
-				(FT_GESTURE_POINTER_SIZEOF * i)]) & 0x0F) << 8 |
-				(((s16) buf[FT_GESTURE_DATA_HEADER + 1 +
-				(FT_GESTURE_POINTER_SIZEOF * i)]) & 0xFF);
-		gesture_coord_y = (((s16) buf[FT_GESTURE_DATA_HEADER + 2 +
-				(FT_GESTURE_POINTER_SIZEOF * i)]) & 0x0F) << 8 |
-				(((s16) buf[FT_GESTURE_DATA_HEADER + 3 +
-				(FT_GESTURE_POINTER_SIZEOF * i)]) & 0xFF);
-		input_mt_slot(ip_dev, FT_GESTURE_DEFAULT_TRACKING_ID);
-		input_mt_report_slot_state(ip_dev, MT_TOOL_FINGER, 1);
-		input_report_abs(ip_dev, ABS_MT_POSITION_X, gesture_coord_x);
-		input_report_abs(ip_dev, ABS_MT_POSITION_Y, gesture_coord_y);
-		input_mt_report_pointer_emulation(ip_dev, false);
-		input_sync(ip_dev);
+			if ( data->dt2w_exec == 0 &&
+				(abs(x - data->prev_touch.x) < 50) &&
+				(abs(y - data->prev_touch.y) < 50) &&
+				(time - data->prev_touch.time < 500)
+				) {
+				data->dt2w_exec = 1;
+				input_report_key(data->power_dev, KEY_WAKEUP, 1);
+				input_report_key(data->power_dev, KEY_WAKEUP, 0);
+				input_sync(data->power_dev);
+				pr_info("t2w: wakeup key sent\n");
+				return 0;				
+			}
+			data->prev_touch.x = x;
+			data->prev_touch.y = y;
+			data->prev_touch.time = time;
+			data->dt2w_exec = 0;
+		}
 	}
-	input_mt_slot(ip_dev, FT_GESTURE_DEFAULT_TRACKING_ID);
-	input_mt_report_slot_state(ip_dev, MT_TOOL_FINGER, 0);
-	input_mt_report_pointer_emulation(ip_dev, false);
-	input_sync(ip_dev);
-
 	return 0;
 }
 #else
@@ -2688,12 +2665,33 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 					"sys file creation failed\n");
 			goto free_enable_sys;
 		}
+
+		// Gesture
+		data->dt2w_exec = 0;
+		memset(&data->prev_touch, 0, sizeof(data->prev_touch));
+		data->power_dev = input_allocate_device();
+		if (!data->power_dev)
+		{
+			dev_err(gesture_pdata->dev, "failed to allocate power key\n");
+			goto free_pocket_sys;
+		}
+
+		input_set_capability(data->power_dev, EV_KEY, KEY_WAKEUP);
+		data->power_dev->name = "ft5x06_ts_power";
+		data->power_dev->phys = "ft5x06_ts_power/input0";
+
+		err = input_register_device(data->power_dev);
+		if (err) {
+			dev_err(gesture_pdata->dev, "failed to register power key device\n");
+			goto free_alloc_power_dev;
+		}
+
 	}
 
 	err = device_create_file(&client->dev, &dev_attr_fw_name);
 	if (err) {
 		dev_err(&client->dev, "sys file creation failed\n");
-		goto free_pocket_sys;
+		goto free_reg_power_dev;
 	}
 
 	err = device_create_file(&client->dev, &dev_attr_update_fw);
@@ -2818,6 +2816,12 @@ free_update_fw_sys:
 	device_remove_file(&client->dev, &dev_attr_update_fw);
 free_fw_name_sys:
 	device_remove_file(&client->dev, &dev_attr_fw_name);
+free_reg_power_dev:
+	if (ft5x06_gesture_support_enabled() && data->pdata->gesture_support)
+		input_unregister_device(data->power_dev);
+free_alloc_power_dev:
+	if (ft5x06_gesture_support_enabled() && data->pdata->gesture_support)
+		input_free_device(data->power_dev);
 free_pocket_sys:
 	if (ft5x06_gesture_support_enabled() && data->pdata->gesture_support)
 		device_remove_file(&client->dev, &dev_attr_pocket);
@@ -2895,6 +2899,8 @@ static int ft5x06_ts_remove(struct i2c_client *client)
 
 	if (ft5x06_gesture_support_enabled() && data->pdata->gesture_support) {
 		device_init_wakeup(&client->dev, 0);
+		input_unregister_device(data->power_dev);
+		input_free_device(data->power_dev);
 		device_remove_file(&client->dev, &dev_attr_pocket);
 		device_remove_file(&client->dev, &dev_attr_enable);
 		device_destroy(data->gesture_pdata->gesture_class, 0);
