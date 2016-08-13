@@ -49,6 +49,10 @@
 #define FT_SUSPEND_LEVEL 1
 #endif
 
+#ifdef CONFIG_TOUCHSCREEN_FT5X06_GESTURE
+#include <linux/wake_gestures.h>
+#endif
+
 #define FT_DRIVER_VERSION	0x02
 
 #define FT_META_REGS		3
@@ -571,91 +575,13 @@ static DEVICE_ATTR(pocket, 0664,
 		gesture_in_pocket_mode_show,
 		gesture_in_pocket_mode_store);
 
-static int ft5x06_report_gesture_doubleclick(struct input_dev *ip_dev)
-{
-	int i;
-	for (i = 0; i < 2; i++) {
-		input_mt_slot(ip_dev, FT_GESTURE_DEFAULT_TRACKING_ID);
-		input_mt_report_slot_state(ip_dev, MT_TOOL_FINGER, 1);
-		input_report_abs(ip_dev, ABS_MT_POSITION_X,
-					FT_GESTURE_DOUBLECLICK_COORD_X);
-		input_report_abs(ip_dev, ABS_MT_POSITION_Y,
-					FT_GESTURE_DOUBLECLICK_COORD_Y);
-		input_mt_report_pointer_emulation(ip_dev, false);
-		input_sync(ip_dev);
-		input_mt_slot(ip_dev, FT_GESTURE_DEFAULT_TRACKING_ID);
-		input_mt_report_slot_state(ip_dev, MT_TOOL_FINGER, 0);
-		input_mt_report_pointer_emulation(ip_dev, false);
-		input_sync(ip_dev);
-	}
-	return 0;
+struct ft5x06_ts_data *gl_ft5x06_ts_data;
+bool scr_suspended(void) {
+	struct ft5x06_ts_data *data = gl_ft5x06_ts_data;
+	return data->suspended;
 }
 
-static int ft5x06_report_gesture(struct i2c_client *i2c_client,
-		struct input_dev *ip_dev)
-{
-	int i, temp, gesture_data_size;
-	int gesture_coord_x, gesture_coord_y;
-	int ret = -1;
-	short pointnum = 0;
-	unsigned char buf[FT_GESTURE_POINTER_NUM_MAX *
-			FT_GESTURE_POINTER_SIZEOF + FT_GESTURE_DATA_HEADER];
 
-	buf[0] = FT_REG_GESTURE_OUTPUT;
-	ret = ft5x06_i2c_read(i2c_client, buf, 1,
-				buf, FT_GESTURE_DATA_HEADER);
-	if (ret < 0) {
-		dev_err(&i2c_client->dev, "%s read touchdata failed.\n",
-			__func__);
-		return ret;
-	}
-
-	/* FW support doubleclick */
-	if (FT_GESTURE_DOUBLECLICK_ID == buf[0]) {
-		ft5x06_report_gesture_doubleclick(ip_dev);
-		return 0;
-	}
-
-	pointnum = (short)(buf[1]) & 0xff;
-	gesture_data_size = pointnum * FT_GESTURE_POINTER_SIZEOF +
-			FT_GESTURE_DATA_HEADER;
-	buf[0] = FT_REG_GESTURE_OUTPUT;
-	temp = gesture_data_size / I2C_TRANSFER_MAX_BYTE;
-	for (i = 0; i < temp; i++)
-		ret = ft5x06_i2c_read(i2c_client, buf, ((i == 0) ? 1 : 0),
-			buf + I2C_TRANSFER_MAX_BYTE * i, I2C_TRANSFER_MAX_BYTE);
-	ret = ft5x06_i2c_read(i2c_client, buf, ((temp == 0) ? 1 : 0),
-			buf + I2C_TRANSFER_MAX_BYTE * temp,
-			gesture_data_size - I2C_TRANSFER_MAX_BYTE * temp);
-	if (ret < 0) {
-		dev_err(&i2c_client->dev, "%s read touchdata failed.\n",
-			__func__);
-		return ret;
-	}
-
-	for (i = 0; i < pointnum; i++) {
-		gesture_coord_x = (((s16) buf[FT_GESTURE_DATA_HEADER +
-				(FT_GESTURE_POINTER_SIZEOF * i)]) & 0x0F) << 8 |
-				(((s16) buf[FT_GESTURE_DATA_HEADER + 1 +
-				(FT_GESTURE_POINTER_SIZEOF * i)]) & 0xFF);
-		gesture_coord_y = (((s16) buf[FT_GESTURE_DATA_HEADER + 2 +
-				(FT_GESTURE_POINTER_SIZEOF * i)]) & 0x0F) << 8 |
-				(((s16) buf[FT_GESTURE_DATA_HEADER + 3 +
-				(FT_GESTURE_POINTER_SIZEOF * i)]) & 0xFF);
-		input_mt_slot(ip_dev, FT_GESTURE_DEFAULT_TRACKING_ID);
-		input_mt_report_slot_state(ip_dev, MT_TOOL_FINGER, 1);
-		input_report_abs(ip_dev, ABS_MT_POSITION_X, gesture_coord_x);
-		input_report_abs(ip_dev, ABS_MT_POSITION_Y, gesture_coord_y);
-		input_mt_report_pointer_emulation(ip_dev, false);
-		input_sync(ip_dev);
-	}
-	input_mt_slot(ip_dev, FT_GESTURE_DEFAULT_TRACKING_ID);
-	input_mt_report_slot_state(ip_dev, MT_TOOL_FINGER, 0);
-	input_mt_report_pointer_emulation(ip_dev, false);
-	input_sync(ip_dev);
-
-	return 0;
-}
 #else
 static DEVICE_ATTR(pocket, 0664, NULL, NULL);
 static DEVICE_ATTR(enable, 0664, NULL, NULL);
@@ -745,8 +671,8 @@ static irqreturn_t ft5x06_ts_interrupt(int irq, void *dev_id)
 		if (gesture_is_active) {
 			pm_wakeup_event(&(data->client->dev),
 					FT_GESTURE_WAKEUP_TIMEOUT);
-			ft5x06_report_gesture(data->client, ip_dev);
-			return IRQ_HANDLED;
+			//ft5x06_report_gesture(data->client, ip_dev);
+			//return IRQ_HANDLED;
 		}
 	}
 
@@ -766,7 +692,6 @@ static irqreturn_t ft5x06_ts_interrupt(int irq, void *dev_id)
 		id = (buf[FT_TOUCH_ID_POS + FT_ONE_TCH_LEN * i]) >> 4;
 		if (id >= FT_MAX_ID)
 			break;
-
 		update_input = true;
 
 		x = (buf[FT_TOUCH_X_H_POS + FT_ONE_TCH_LEN * i] & 0x0F) << 8 |
@@ -1245,6 +1170,8 @@ static int ft5x06_ts_suspend(struct device *dev)
 		device_may_wakeup(dev) &&
 		data->gesture_pdata->gesture_enable_to_set) {
 
+		printk(KERN_DEBUG "t2w: screen off but can accept signal\n");
+
 		ft5x0x_write_reg(data->client, FT_REG_GESTURE_ENABLE, 1);
 		err = enable_irq_wake(data->client->irq);
 		if (err)
@@ -1260,7 +1187,7 @@ static int ft5x06_ts_suspend(struct device *dev)
 static int ft5x06_ts_resume(struct device *dev)
 {
 	struct ft5x06_ts_data *data = dev_get_drvdata(dev);
-	int err;
+	int i, err;
 
 	if (!data->suspended) {
 		dev_dbg(dev, "Already in awake state\n");
@@ -1285,6 +1212,15 @@ static int ft5x06_ts_resume(struct device *dev)
 		data->gesture_pdata->gesture_enable_to_set) {
 
 		ft5x0x_write_reg(data->client, FT_REG_GESTURE_ENABLE, 0);
+
+		/* release all touches */
+		for (i = 0; i < data->pdata->num_max_touches; i++) {
+			input_mt_slot(data->input_dev, i);
+			input_mt_report_slot_state(data->input_dev, MT_TOOL_FINGER, 0);
+		}
+		input_mt_report_pointer_emulation(data->input_dev, false);
+		input_sync(data->input_dev);
+
 		err = disable_irq_wake(data->client->irq);
 		if (err)
 			dev_err(dev, "%s: disable_irq_wake failed\n",
@@ -2468,7 +2404,7 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 
 		strlcpy(data->fw_name, pdata->fw_name, len + 1);
 	}
-
+	gl_ft5x06_ts_data = data;
 	data->tch_data_len = FT_TCH_LEN(pdata->num_max_touches);
 	data->tch_data = devm_kzalloc(&client->dev,
 				data->tch_data_len, GFP_KERNEL);
@@ -2656,7 +2592,6 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 		data->gesture_pdata = gesture_pdata;
 		gesture_pdata->data = data;
 		gesture_pdata->gesture_enable_to_set=1;
-
 		gesture_pdata->gesture_class =
 					class_create(THIS_MODULE, "gesture");
 		if (IS_ERR(gesture_pdata->gesture_class)) {
